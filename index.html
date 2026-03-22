@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HR Attendance — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!--
+  ============================================================
+  FILE: index.html
+  PURPOSE: The full HR app shell — sidebar, views, webcam modal
+  TALKS TO: app.js      →  all interactivity and API calls
+            server.js   →  /api/* endpoints (Node + Express)
+  VIEWS (switched by sidebar nav):
+    #view-dashboard   — stats, employee table, charts
+    #view-attendance  — webcam check-in / check-out
+    #view-upload      — bulk Excel import
+    #view-alerts      — full alerts log
+  ============================================================
+-->
+
+<style>
+/* ── Reset & CSS variables ──────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:     #0d0f14;   /* darkest — page background */
+  --bg2:    #131720;   /* sidebar and card background */
+  --bg3:    #1a1f2e;   /* hover states, table headers */
+  --border: #252d3d;   /* all borders */
+  --text:   #e2e8f0;   /* primary text */
+  --muted:  #64748b;   /* secondary / helper text */
+  --blue:   #6c8ef5;   /* primary accent — on-time, links */
+  --green:  #34d399;   /* safe / success */
+  --amber:  #f59e0b;   /* late / warning */
+  --red:    #f87171;   /* critical / error */
+  --purple: #a78bfa;   /* dept chart bars */
+  --teal:   #2dd4bf;
+  --font:   'Sora', sans-serif;
+  --mono:   'JetBrains Mono', monospace;
+}
+
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; min-height: 100vh; overflow-x: hidden; }
+button { cursor: pointer; border: none; font-family: var(--font); }
+input, select { font-family: var(--font); }
+
+/* ── Page shell: sidebar + main ─────────────────────────── */
+.wrapper { display: flex; min-height: 100vh; }
+.sidebar { width: 220px; background: var(--bg2); border-right: 1px solid var(--border); padding: 24px 0; display: flex; flex-direction: column; flex-shrink: 0; position: sticky; top: 0; height: 100vh; }
+.main    { flex: 1; overflow: auto; }
+
+/* ── Sidebar internals ──────────────────────────────────── */
+.logo      { padding: 0 20px 24px; border-bottom: 1px solid var(--border); }
+.logo-mark { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); }
+.logo-mark span { color: var(--blue); }
+.logo-sub  { font-size: 10px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 2px; }
+
+.nav      { padding: 16px 8px; flex: 1; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; color: var(--muted); font-size: 13px; cursor: pointer; margin-bottom: 2px; transition: all .2s; }
+.nav-item:hover, .nav-item.active { background: var(--bg3); color: var(--text); }
+.nav-item.active { color: var(--blue); }
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.sidebar-bottom { padding: 16px 20px; border-top: 1px solid var(--border); }
+.refresh-badge  { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+/* pulsing dot shows the dashboard is live */
+.dot-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ── Top bar ────────────────────────────────────────────── */
+.topbar       { display: flex; align-items: center; justify-content: space-between; padding: 16px 28px; border-bottom: 1px solid var(--border); background: var(--bg); }
+.page-title   { font-size: 13px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.time-display { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+/* ── Reusable buttons ───────────────────────────────────── */
+.btn         { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 7px; font-size: 12px; font-weight: 500; transition: all .2s; }
+.btn-ghost   { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover  { border-color: var(--blue); color: var(--blue); }
+.btn-primary { background: var(--blue); color: #fff; }
+.btn-primary:hover { opacity: .85; }
+.btn-green   { background: #065f46; color: var(--green); border: 1px solid #047857; }
+.btn-green:hover { background: #047857; }
+
+/* ── Content padding ────────────────────────────────────── */
+.content { padding: 24px 28px; display: flex; flex-direction: column; gap: 24px; }
+
+/* ── Stat summary cards (row of 4) ─────────────────────── */
+.stats-row  { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.stat-card  { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; }
+.stat-card::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; }
+.stat-card.blue::after  { background: var(--blue); }
+.stat-card.green::after { background: var(--green); }
+.stat-card.amber::after { background: var(--amber); }
+.stat-card.red::after   { background: var(--red); }
+.stat-label { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.stat-value { font-size: 32px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+.stat-value.blue  { color: var(--blue); }
+.stat-value.green { color: var(--green); }
+.stat-value.amber { color: var(--amber); }
+.stat-value.red   { color: var(--red); }
+.stat-sub { font-size: 11px; color: var(--muted); }
+
+/* ── Two-column layout ──────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 340px; gap: 16px; }
+
+/* ── Generic card ───────────────────────────────────────── */
+.card      { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.card-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.card-title { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.card-badge { font-size: 11px; background: var(--bg3); border: 1px solid var(--border); padding: 3px 10px; border-radius: 20px; color: var(--muted); }
+
+/* ── Employee table ─────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+thead tr { background: var(--bg3); }
+th { padding: 10px 16px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); text-align: left; font-weight: 500; }
+td { padding: 13px 16px; border-top: 1px solid var(--border); font-size: 13px; }
+tr:hover td { background: rgba(255,255,255,.02); }
+
+.emp-cell { display: flex; align-items: center; gap: 10px; }
+.avatar   { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; flex-shrink: 0; overflow: hidden; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.emp-name { font-weight: 500; font-size: 13px; }
+.emp-sub  { font-size: 11px; color: var(--muted); }
+
+/* ── Status badges ──────────────────────────────────────── */
+.badge          { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 500; }
+.badge-safe     { background: #052e16; color: var(--green); border: 1px solid #065f46; }
+.badge-risk     { background: #451a03; color: var(--amber); border: 1px solid #92400e; }
+.badge-critical { background: #2d0a0a; color: var(--red);   border: 1px solid #7f1d1d; }
+
+/* ── Strike dots ────────────────────────────────────────── */
+.strikes    { display: flex; gap: 5px; }
+.strike-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--border); }
+.strike-dot.filled-red   { background: var(--red);   border-color: var(--red); }
+.strike-dot.filled-amber { background: var(--amber); border-color: var(--amber); }
+.strike-dot.filled-green { background: var(--green); border-color: var(--green); }
+
+/* ── Check-in time colours ──────────────────────────────── */
+.time-late    { color: var(--amber); font-family: var(--mono); font-size: 12px; }
+.time-ok      { color: var(--text);  font-family: var(--mono); font-size: 12px; }
+.time-missing { color: var(--muted); font-size: 12px; }
+
+/* ── Excuse button ──────────────────────────────────────── */
+.btn-excuse         { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: 6px; font-size: 11px; transition: all .2s; }
+.btn-excuse:hover   { border-color: var(--green); color: var(--green); }
+.btn-excuse.excused { color: var(--green); border-color: #065f46; }
+
+/* ── Right sidebar ──────────────────────────────────────── */
+.right-col { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── At-risk list ───────────────────────────────────────── */
+.risk-item  { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-top: 1px solid var(--border); }
+.risk-rank  { font-size: 11px; color: var(--muted); font-family: var(--mono); width: 24px; }
+.risk-count { font-size: 18px; font-weight: 700; font-family: var(--mono); }
+.risk-count.red   { color: var(--red); }
+.risk-count.amber { color: var(--amber); }
+
+/* ── 7-day trend chart ──────────────────────────────────── */
+.trend-chart    { padding: 16px 20px; }
+.trend-bars     { display: flex; align-items: flex-end; gap: 8px; height: 80px; }
+.trend-bar-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+.trend-bar      { background: var(--bg3); border: 1px solid var(--border); border-radius: 3px; width: 100%; transition: all .3s; min-height: 4px; }
+.trend-bar.today { background: var(--amber); border-color: var(--amber); }
+.trend-label    { font-size: 10px; color: var(--muted); }
+.trend-count    { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+
+/* ── Alerts ─────────────────────────────────────────────── */
+.alert-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.alert-dot  { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.alert-dot.critical { background: var(--red); }
+.alert-dot.warning  { background: var(--amber); }
+.alert-msg  { font-size: 12px; color: var(--text); flex: 1; line-height: 1.5; }
+.alert-msg strong { color: var(--text); }
+.alert-time { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+
+/* ── Bottom row: dept chart + monthly table ─────────────── */
+.bottom-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.dept-chart   { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.dept-bar-row { display: flex; align-items: center; gap: 10px; }
+.dept-name    { width: 80px; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.dept-track   { flex: 1; background: var(--bg3); border-radius: 4px; height: 8px; overflow: hidden; }
+.dept-fill    { height: 100%; background: var(--purple); border-radius: 4px; transition: width .6s; }
+.dept-num     { font-size: 11px; color: var(--muted); font-family: var(--mono); width: 20px; text-align: right; }
+
+/* ── Webcam modal (floating overlay) ────────────────────── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+.modal-overlay.open { display: flex; }
+.modal         { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px; width: 500px; max-width: 95vw; }
+.modal-title   { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.modal-sub     { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.cam-frame     { width: 100%; aspect-ratio: 4/3; background: #000; border-radius: 10px; overflow: hidden; position: relative; margin-bottom: 16px; }
+#webcamVideo   { width: 100%; height: 100%; object-fit: cover; }
+#snapCanvas    { display: none; }   /* invisible; used to capture a photo frame */
+.cam-overlay   { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.cam-guide     { width: 180px; height: 220px; border: 2px dashed rgba(108,142,245,.4); border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; }
+.cam-controls  { display: flex; gap: 10px; margin-bottom: 16px; }
+.cam-controls select { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; color: var(--text); font-size: 13px; }
+.punch-row     { display: flex; gap: 8px; margin-bottom: 16px; }
+.punch-btn     { flex: 1; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 500; border: 1px solid; transition: all .2s; }
+.punch-in      { background: #052e16; color: var(--green); border-color: #065f46; }
+.punch-out     { background: #1c1917; color: var(--muted); border-color: var(--border); }
+.punch-in.selected,  .punch-in:hover  { background: #065f46; }
+.punch-out.selected, .punch-out:hover { background: var(--bg3); border-color: var(--amber); color: var(--amber); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.success-flash { background: #052e16; border: 1px solid #065f46; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--green); display: none; margin-bottom: 12px; }
+
+/* ── Upload zone ────────────────────────────────────────── */
+.upload-zone       { border: 2px dashed var(--border); border-radius: 10px; padding: 24px; text-align: center; cursor: pointer; transition: all .2s; margin-bottom: 12px; }
+.upload-zone:hover { border-color: var(--blue); }
+.upload-zone p     { font-size: 12px; color: var(--muted); }
+
+/* ── Only the active view is shown ─────────────────────── */
+.view-content        { display: none; }
+.view-content.active { display: block; }   /* app.js adds/removes .active */
+
+/* ── Custom scrollbar ───────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="wrapper">
+
+<!-- ══ SIDEBAR ═══════════════════════════════════════════════ -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">Attend<span>AI</span></div>
+    <div class="logo-sub">HR Intelligence</div>
+  </div>
+
+  <!-- Each nav-item calls switchView() in app.js -->
+  <nav class="nav">
+    <div class="nav-item active" onclick="switchView('dashboard', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+        <rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      Dashboard
+    </div>
+    <div class="nav-item" onclick="switchView('attendance', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="8" r="4"/>
+        <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+      </svg>
+      Take Attendance
+    </div>
+    <div class="nav-item" onclick="switchView('upload', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Upload Excel
+    </div>
+    <div class="nav-item" onclick="switchView('alerts', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+      </svg>
+      Alerts
+    </div>
+  </nav>
+
+  <div class="sidebar-bottom">
+    <div class="refresh-badge">
+      <div class="dot-pulse"></div>
+      Auto-refresh 60s
+    </div>
+    <div style="margin-top:10px">
+      <button class="btn btn-ghost" style="width:100%;justify-content:center;font-size:11px" onclick="downloadExcel()">
+        ⬇ Export Excel
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- ══ MAIN AREA ══════════════════════════════════════════════ -->
+<div class="main">
+
+  <!-- Top bar — title is updated by switchView() in app.js -->
+  <div class="topbar">
+    <div class="page-title" id="pageTitle">TODAY'S OVERVIEW</div>
+    <div class="topbar-right">
+      <div class="time-display" id="clockDisplay">--:--:--</div>
+      <button class="btn btn-ghost" onclick="openCam()">📷 Take Attendance</button>
+      <button class="btn btn-primary" onclick="loadDashboard()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <!-- ── VIEW: DASHBOARD ──────────────────────────────────── -->
+  <div id="view-dashboard" class="view-content active">
+    <div class="content">
+
+      <!-- 4 summary stat cards — numbers filled by renderStats() in app.js -->
+      <div class="stats-row">
+        <div class="stat-card blue">
+          <div class="stat-label">Total Employees</div>
+          <div class="stat-value blue" id="sTotalEmp">—</div>
+          <div class="stat-sub">Tracked this month</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-label">On Time Today</div>
+          <div class="stat-value green" id="sOnTime">—</div>
+          <div class="stat-sub" id="sOnTimePct">—</div>
+        </div>
+        <div class="stat-card amber">
+          <div class="stat-label">Late Today</div>
+          <div class="stat-value amber" id="sLate">—</div>
+          <div class="stat-sub" id="sLatePct">—</div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-label">Critical (3 strikes)</div>
+          <div class="stat-value red" id="sCritical">—</div>
+          <div class="stat-sub">Meeting scheduled</div>
+        </div>
+      </div>
+
+      <!-- Two-column: employee table (left) + sidebar (right) -->
+      <div class="two-col">
+
+        <!-- Left: full employee list — rows injected by renderEmployeeTable() -->
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">All Employees — Strike Status</div>
+            <div class="card-badge" id="empCount">— employees</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th><th>Check-In</th><th>Check-Out</th>
+                  <th>Strikes</th><th>Status</th><th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="empTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Right: at-risk list, 7-day trend, alerts — filled by app.js -->
+        <div class="right-col">
+          <div class="card">
+            <div class="card-head">
+              <div class="card-title">At Risk — 2+ Strikes</div>
+              <div class="card-badge" id="atRiskCount">0 employees</div>
+            </div>
+            <div id="atRiskList"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><div class="card-title">Late Arrivals — Last 7 Days</div></div>
+            <div class="trend-chart">
+              <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Daily trend</div>
+              <div class="trend-bars" id="trendBars"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><div class="card-title">Alerts & Notifications</div></div>
+            <div id="alertsList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom: dept chart + monthly late counter -->
+      <div class="bottom-row">
+        <div class="card">
+          <div class="card-head"><div class="card-title">Department Breakdown</div></div>
+          <div class="dept-chart" id="deptChart"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">Monthly Late Counter</div>
+            <div id="monthLabel" class="card-badge">—</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Employee</th><th>Dept</th><th>Count</th><th>Status</th></tr></thead>
+              <tbody id="monthlyBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /view-dashboard -->
+
+  <!-- ── VIEW: TAKE ATTENDANCE ─────────────────────────────── -->
+  <div id="view-attendance" class="view-content">
+    <div class="content">
+      <div class="card" style="max-width:520px;margin:0 auto">
+        <div class="card-head"><div class="card-title">Webcam Attendance</div></div>
+        <div style="padding:20px">
+          <!-- Camera preview with face-guide overlay -->
+          <div class="cam-frame">
+            <video id="webcamVideo2" autoplay muted playsinline></video>
+            <canvas id="snapCanvas2" style="display:none"></canvas>
+            <div class="cam-overlay"><div class="cam-guide"></div></div>
+          </div>
+          <div class="cam-controls">
+            <select id="empSelect2"><option value="">— Select Employee —</option></select>
+          </div>
+          <div class="punch-row">
+            <button class="punch-btn punch-in selected" id="punchIn2"  onclick="selectPunch('IN',2)">Check IN</button>
+            <button class="punch-btn punch-out"          id="punchOut2" onclick="selectPunch('OUT',2)">Check OUT</button>
+          </div>
+          <div class="success-flash" id="flash2">✓ Attendance marked successfully!</div>
+          <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px" onclick="snapAndSubmit(2)">
+            📸 Capture & Mark
+          </button>
+        </div>
+      </div>
+    </div>
+  </div><!-- /view-attendance -->
+
+  <!-- ── VIEW: UPLOAD EXCEL ────────────────────────────────── -->
+  <div id="view-upload" class="view-content">
+    <div class="content">
+      <div class="card" style="max-width:520px;margin:0 auto">
+        <div class="card-head"><div class="card-title">Upload Biometric Excel</div></div>
+        <div style="padding:20px">
+
+          <!-- Drop zone — click or drag a file here -->
+          <div class="upload-zone" id="dropZone"
+               onclick="document.getElementById('xlsxInput').click()"
+               ondragover="event.preventDefault();this.style.borderColor='var(--blue)'"
+               ondragleave="this.style.borderColor=''"
+               ondrop="handleDrop(event)">
+            <div style="font-size:32px;margin-bottom:10px">📂</div>
+            <p style="font-size:13px;color:var(--text);margin-bottom:4px;font-weight:500">Click to browse or drag &amp; drop</p>
+            <p>Accepts .xlsx or .xls files up to 20 MB</p>
+          </div>
+
+          <!-- Hidden file input — the actual file picker -->
+          <input type="file" id="xlsxInput" accept=".xlsx,.xls" style="display:none" onchange="uploadExcel(this)">
+
+          <!-- Result message box -->
+          <div id="uploadResult" style="font-size:13px;color:var(--muted);margin-top:12px;padding:10px 14px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);min-height:42px;display:flex;align-items:center;word-break:break-word;"></div>
+
+          <!-- Column reference + template download -->
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Required columns in your Excel sheet:</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:2">
+              Employee ID &nbsp;·&nbsp; Name &nbsp;·&nbsp; Department &nbsp;·&nbsp; Date &nbsp;·&nbsp; Time &nbsp;·&nbsp; Punch Status (IN / OUT)
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">
+              Optional: add an <span style="font-family:var(--mono)">Email</span> column to enable automatic warning emails.
+            </div>
+            <button class="btn btn-ghost" style="margin-top:14px;font-size:12px" onclick="downloadTemplate()">
+              ↓ Download blank template
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div><!-- /view-upload -->
+
+  <!-- ── VIEW: ALERTS LOG ──────────────────────────────────── -->
+  <div id="view-alerts" class="view-content">
+    <div class="content">
+      <div class="card">
+        <div class="card-head"><div class="card-title">All Alerts & Notifications</div></div>
+        <div id="allAlertsList"></div>
+      </div>
+    </div>
+  </div><!-- /view-alerts -->
+
+</div><!-- /main -->
+</div><!-- /wrapper -->
+
+<!-- ══ WEBCAM MODAL (floating overlay from top-bar button) ══ -->
+<div class="modal-overlay" id="camModal">
+  <div class="modal">
+    <div class="modal-title">Take Attendance</div>
+    <div class="modal-sub">Position face in frame, select employee and punch type</div>
+    <div class="cam-frame">
+      <video id="webcamVideo" autoplay muted playsinline></video>
+      <canvas id="snapCanvas" style="display:none"></canvas>
+      <div class="cam-overlay"><div class="cam-guide"></div></div>
+    </div>
+    <div class="cam-controls">
+      <select id="empSelect"><option value="">— Select Employee —</option></select>
+    </div>
+    <div class="punch-row">
+      <button class="punch-btn punch-in selected" id="punchIn"  onclick="selectPunch('IN',1)">Check IN</button>
+      <button class="punch-btn punch-out"          id="punchOut" onclick="selectPunch('OUT',1)">Check OUT</button>
+    </div>
+    <div class="success-flash" id="flash1">✓ Attendance marked! Email sent if late.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeCam()">Cancel</button>
+      <button class="btn btn-primary" onclick="snapAndSubmit(1)">📸 Mark Attendance</button>
+    </div>
+  </div>
+</div>
+
+<!-- All JS logic is in app.js -->
+<script src="app.js"></script>
+
+</body>
+</html>

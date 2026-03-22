@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HR Attendance Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!--
+  ============================================================
+  FILE: dashboard.html
+  PURPOSE: The standalone HR dashboard UI (no server needed)
+  TALKS TO: dashboard.js  →  reads employee data and renders
+  ============================================================
+-->
+
+<style>
+/* ── Reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Design tokens (colours, fonts) ────────────────────── */
+:root {
+  --bg:         #0F1117;   /* page background */
+  --surface:    #1A1D27;   /* card background */
+  --surface2:   #222536;   /* slightly lighter surface */
+  --border:     rgba(255,255,255,0.07);
+  --border2:    rgba(255,255,255,0.12);
+  --text:       #F0F2F8;
+  --muted:      #8892A4;   /* secondary / helper text */
+  --safe:       #22D3A0;   /* green  — on time / safe */
+  --safe-bg:    rgba(34,211,160,0.1);
+  --warn:       #F59E0B;   /* amber  — late / at risk */
+  --warn-bg:    rgba(245,158,11,0.1);
+  --danger:     #F4455A;   /* red    — critical (3 strikes) */
+  --danger-bg:  rgba(244,69,90,0.1);
+  --accent:     #6366F1;   /* indigo — brand accent */
+  --accent-bg:  rgba(99,102,241,0.15);
+  --font:       'DM Sans', sans-serif;
+  --mono:       'DM Mono', monospace;
+}
+
+/* ── Base ───────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  min-height: 100vh;
+}
+
+/* ── Top navigation bar ─────────────────────────────────── */
+.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 2rem;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 50;       /* stays above the page content when scrolling */
+}
+.topbar-left  { display: flex; align-items: center; gap: 12px; }
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+
+.logo {
+  width: 28px; height: 28px;
+  background: var(--accent);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; color: #fff;
+}
+.site-title { font-size: 15px; font-weight: 500; }
+.site-sub   { font-size: 12px; color: var(--muted); }
+
+/* blinking green dot — shows "live" status */
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted);
+  font-family: var(--mono);
+}
+.pulse-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--safe);
+  animation: blink 2s infinite;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.date-pill {
+  font-size: 12px; color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px;
+  font-family: var(--mono);
+}
+
+/* ── Main page wrapper ──────────────────────────────────── */
+.main {
+  padding: 2rem;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* small ALL-CAPS label above each section */
+.section-label {
+  font-size: 11px; font-weight: 500;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* ── KPI summary cards (row of 4) ───────────────────────── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px;
+  position: relative; overflow: hidden;
+}
+/* coloured top accent stripe per card */
+.kpi::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+}
+.kpi.blue::before  { background: var(--accent); }
+.kpi.green::before { background: var(--safe); }
+.kpi.amber::before { background: var(--warn); }
+.kpi.red::before   { background: var(--danger); }
+
+.kpi-label { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.kpi-val   { font-size: 32px; font-weight: 300; letter-spacing: -0.02em; line-height: 1; margin-bottom: 6px; }
+.kpi.blue  .kpi-val { color: #818CF8; }
+.kpi.green .kpi-val { color: var(--safe); }
+.kpi.amber .kpi-val { color: var(--warn); }
+.kpi.red   .kpi-val { color: var(--danger); }
+.kpi-sub { font-size: 11px; color: var(--muted); }
+
+/* thin progress bar inside each KPI card */
+.kpi-bar       { height: 3px; background: var(--surface2); border-radius: 2px; margin-top: 12px; overflow: hidden; }
+.kpi-bar-inner { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+
+/* ── Two-column main area ───────────────────────────────── */
+/* Left: employee table  |  Right: at-risk list + charts */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+/* ── Reusable panel (card) ──────────────────────────────── */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.panel-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.panel-head-title { font-size: 13px; font-weight: 500; }
+.panel-badge {
+  font-size: 11px; color: var(--muted);
+  background: var(--surface2);
+  padding: 3px 8px; border-radius: 20px;
+  font-family: var(--mono);
+}
+
+/* ── Employee table ─────────────────────────────────────── */
+.emp-table { width: 100%; border-collapse: collapse; }
+.emp-table th {
+  font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+  padding: 10px 20px; text-align: left;
+  background: rgba(255,255,255,0.02);
+  border-bottom: 1px solid var(--border);
+}
+.emp-table td {
+  padding: 12px 20px; font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  vertical-align: middle;
+}
+.emp-table tr:last-child td { border-bottom: none; }
+.emp-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* avatar circle with coloured initials */
+.avatar-wrap { display: flex; align-items: center; gap: 10px; }
+.avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 500; flex-shrink: 0;
+}
+.emp-name { font-weight: 500; }
+.emp-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+
+/* ── Status badges ──────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 500;
+  padding: 3px 10px; border-radius: 20px;
+}
+.badge-safe     { background: var(--safe-bg);   color: var(--safe);   border: 1px solid rgba(34,211,160,0.2); }
+.badge-risk     { background: var(--warn-bg);   color: var(--warn);   border: 1px solid rgba(245,158,11,0.2); }
+.badge-critical { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(244,69,90,0.2);  }
+
+/* ── Strike dots (3 circles, filled = strike) ───────────── */
+.dots { display: flex; gap: 4px; align-items: center; }
+.dot  { width: 8px; height: 8px; border-radius: 50%; border: 1px solid; }
+.dot-safe     { background: var(--safe);   border-color: var(--safe); }
+.dot-risk     { background: var(--warn);   border-color: var(--warn); }
+.dot-critical { background: var(--danger); border-color: var(--danger); }
+.dot-empty    { background: transparent;   border-color: var(--border2); }
+
+/* ── Excuse button ──────────────────────────────────────── */
+.btn-excuse {
+  font-size: 11px; color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px;
+  cursor: pointer; font-family: var(--font);
+  transition: all 0.15s;
+}
+.btn-excuse:hover { background: var(--accent-bg); color: #818CF8; border-color: rgba(99,102,241,0.3); }
+.btn-excuse.done  { color: var(--muted); background: rgba(255,255,255,0.03); cursor: default; text-decoration: line-through; }
+
+/* small "excused" tag shown next to employee name */
+.excused-tag {
+  font-size: 10px; color: var(--safe);
+  background: var(--safe-bg);
+  padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+}
+
+/* ── At-risk ranked list ────────────────────────────────── */
+.risk-item {
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  display: flex; align-items: center; gap: 12px;
+}
+.risk-item:last-child { border-bottom: none; }
+.risk-rank  { font-size: 11px; color: var(--muted); font-family: var(--mono); min-width: 20px; }
+.risk-info  { flex: 1; min-width: 0; }
+.risk-name  { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.risk-dept  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.risk-count-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.risk-num   { font-size: 18px; font-weight: 300; line-height: 1; }
+.risk-num.amber { color: var(--warn); }
+.risk-num.red   { color: var(--danger); }
+.risk-sub   { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+
+/* ── Bar chart (trend & departments) ───────────────────── */
+.chart-wrap { padding: 16px 20px 20px; }
+.bars {
+  display: flex; align-items: flex-end; gap: 6px;
+  height: 80px; margin-top: 12px;
+}
+.bar-col  { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+.bar-fill { width: 100%; border-radius: 3px 3px 0 0; min-height: 4px; }
+.bar-label { font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.bar-count { font-size: 11px; font-family: var(--mono); }
+
+/* ── Alerts feed ────────────────────────────────────────── */
+.alerts-feed { padding: 8px 0; }
+.alert-row {
+  padding: 10px 20px;
+  display: flex; align-items: flex-start; gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.alert-row:last-child { border-bottom: none; }
+.alert-dot  { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.alert-text { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.alert-text strong { color: var(--text); font-weight: 500; }
+.alert-time { font-size: 10px; color: var(--border2); font-family: var(--mono); margin-left: auto; flex-shrink: 0; }
+
+/* ── Bottom row: alerts + dept chart ───────────────────── */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ── Responsive breakpoints ─────────────────────────────── */
+@media (max-width: 900px) {
+  .kpi-row      { grid-template-columns: repeat(2, 1fr); }
+  .content-grid { grid-template-columns: 1fr; }
+  .bottom-row   { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ══ TOP BAR ══════════════════════════════════════════════ -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">HR</div>
+    <div>
+      <div class="site-title">Attendance Dashboard</div>
+      <div class="site-sub">Live — refreshes every 60s</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <!-- countdown is updated every second by dashboard.js -->
+    <div class="live-badge">
+      <div class="pulse-dot"></div>
+      <span>Next refresh in <span id="countdown">60</span>s</span>
+    </div>
+    <div class="date-pill" id="today-date"></div>
+  </div>
+</div>
+
+<!-- ══ PAGE CONTENT ═════════════════════════════════════════ -->
+<div class="main">
+
+  <!-- ── Row 1: KPI summary cards ─────────────────────────── -->
+  <div class="section-label">Today's Overview</div>
+  <div class="kpi-row">
+
+    <div class="kpi blue">
+      <div class="kpi-label">Total Employees</div>
+      <div class="kpi-val" id="kpi-total">—</div>       <!-- filled by dashboard.js -->
+      <div class="kpi-sub">Tracked this month</div>
+      <div class="kpi-bar"><div class="kpi-bar-inner" id="bar-total" style="background: var(--accent);"></div></div>
+    </div>
+
+    <div class="kpi green">
+      <div class="kpi-label">On Time Today</div>
+      <div class="kpi-val" id="kpi-ontime">—</div>
+      <div class="kpi-sub" id="sub-ontime">— of staff</div>
+      <div class="kpi-bar"><div class="kpi-bar-inner" id="bar-ontime" style="background: var(--safe);"></div></div>
+    </div>
+
+    <div class="kpi amber">
+      <div class="kpi-label">Late Today</div>
+      <div class="kpi-val" id="kpi-late">—</div>
+      <div class="kpi-sub" id="sub-late">— of staff</div>
+      <div class="kpi-bar"><div class="kpi-bar-inner" id="bar-late" style="background: var(--warn);"></div></div>
+    </div>
+
+    <div class="kpi red">
+      <div class="kpi-label">Critical (3 strikes)</div>
+      <div class="kpi-val" id="kpi-critical">—</div>
+      <div class="kpi-sub">Meeting scheduled</div>
+      <div class="kpi-bar"><div class="kpi-bar-inner" id="bar-crit" style="background: var(--danger);"></div></div>
+    </div>
+
+  </div>
+
+  <!-- ── Row 2: Employee table (left) + sidebar cards (right) ── -->
+  <div class="content-grid">
+
+    <!-- Left column: full employee list -->
+    <div>
+      <div class="section-label">All Employees — Strike Status</div>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-head-title">Monthly Late Counter</span>
+          <span class="panel-badge" id="emp-count-badge">— employees</span>
+        </div>
+        <table class="emp-table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Check-In</th>
+              <th>Strikes</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <!-- dashboard.js writes rows into this tbody -->
+          <tbody id="emp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right column: at-risk list, 7-day trend chart -->
+    <div>
+      <div class="section-label">At Risk — 2+ Strikes This Month</div>
+      <div class="panel" style="margin-bottom: 16px;">
+        <div class="panel-head">
+          <span class="panel-head-title">Ranked by late count</span>
+          <span class="panel-badge" id="risk-badge">— employees</span>
+        </div>
+        <!-- dashboard.js populates this list -->
+        <div id="risk-list"></div>
+      </div>
+
+      <div class="section-label">Late Arrivals — Last 7 Days</div>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-head-title">Daily trend</span>
+        </div>
+        <div class="chart-wrap">
+          <!-- dashboard.js draws bars here -->
+          <div class="bars" id="trend-chart"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Row 3: Alerts feed + Department bar chart ─────────── -->
+  <div class="bottom-row">
+
+    <div>
+      <div class="section-label">Alerts & Notifications</div>
+      <div class="panel">
+        <!-- dashboard.js writes alert rows here -->
+        <div class="alerts-feed" id="alerts-feed"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Department Breakdown</div>
+      <div class="panel">
+        <div class="chart-wrap">
+          <!-- dashboard.js draws department bars here -->
+          <div class="bars" id="dept-chart" style="height: 100px;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- /main -->
+
+<!--
+  All JavaScript for this page lives in dashboard.js.
+  It reads the `employees` array and renders everything above.
+-->
+<script src="dashboard.js"></script>
+
+</body>
+</html>
